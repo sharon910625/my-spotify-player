@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>Spotify 自製 Web Player</title>
+    <style>
+        body {
+            background-color: #191414;
+            color: white;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        #login-pane, #player-pane {
+            text-align: center;
+            padding: 30px;
+            background: #282828;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            width: 300px;
+        }
+
+        .hidden { display: none !important; }
+
+        img#track-art {
+            width: 100%;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        h2 { margin: 10px 0 5px; font-size: 1.2rem; }
+        h4 { margin: 0 0 20px; color: #b3b3b3; font-weight: normal; font-size: 0.9rem; }
+
+        button {
+            background-color: #1db954;
+            color: white;
+            border: none;
+            border-radius: 50px;
+            padding: 12px 30px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: transform 0.1s, background-color 0.2s;
+            margin: 5px;
+        }
+
+        button:hover { background-color: #1ed760; transform: scale(1.05); }
+        button:active { transform: scale(0.95); }
+        
+        .controls { display: flex; justify-content: center; gap: 10px; }
+        .btn-small { padding: 10px 20px; font-size: 1.2rem; }
+    </style>
+</head>
+<body>
+
+    <div id="login-pane">
+        <h1>Spotify Web Player</h1>
+        <p>請先登入以啟用播放器</p>
+        <button id="login-btn">登入 Spotify</button>
+    </div>
+
+    <div id="player-pane" class="hidden">
+        <img id="track-art" src="https://via.placeholder.com/300" />
+        <h2 id="track-name">等待播放...</h2>
+        <h4 id="artist-name">請在 Spotify App 選擇此裝置</h4>
+        
+        <div class="controls">
+            <button id="prev" class="btn-small">⏮</button>
+            <button id="toggle" class="btn-small">⏯</button>
+            <button id="next" class="btn-small">⏭</button>
+        </div>
+        <div id="status-bar" style="margin-top:15px; font-size:0.8rem; color:#888;">裝置初始化中...</div>
+    </div>
+
+    <script src="https://sdk.scdn.co/spotify-player.js"></script>
+
+    <script>
+        // ================= 設定區 =================
+        // 【重要】請替換成您自己的 Client ID
+        const clientId = 'be497dc89f2e40848a48e4e22aec3fd8'; 
+        // 必須與 Dashboard 設定的完全一致
+        const redirectUri = 'https://majestic-helminthologic-kerri.ngrok-free.dev/index.html';
+        // =========================================
+
+        const loginPane = document.getElementById('login-pane');
+        const playerPane = document.getElementById('player-pane');
+        const loginBtn = document.getElementById('login-btn');
+        let player;
+        let deviceId;
+
+        // 1. 檢查網址是否有 Token (登入跳轉回來後)
+        const hash = window.location.hash
+            .substring(1)
+            .split('&')
+            .reduce(function (initial, item) {
+                if (item) {
+                    var parts = item.split('=');
+                    initial[parts[0]] = decodeURIComponent(parts[1]);
+                }
+                return initial;
+            }, {});
+        
+        // 清除網址上的 hash 讓看起來乾淨點
+        window.location.hash = '';
+
+        const _token = hash.access_token;
+
+        if (_token) {
+            // 如果有 Token，顯示播放器，隱藏登入頁
+            loginPane.classList.add('hidden');
+            playerPane.classList.remove('hidden');
+            initializePlayer(_token);
+        } else {
+            // 如果沒 Token，顯示登入頁
+            loginPane.classList.remove('hidden');
+            playerPane.classList.add('hidden');
+        }
+
+        // 2. 登入按鈕點擊事件
+        loginBtn.addEventListener('click', () => {
+            // 請求權限 scope
+            const scopes = 'streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state';
+            // 導向 Spotify 授權頁面
+            window.location.href = `https://accounts.spotify.com/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${encodeURIComponent(scopes)}&response_type=token&show_dialog=true`;
+        });
+
+        // 3. 初始化 Spotify Player
+        function initializePlayer(token) {
+            window.onSpotifyWebPlaybackSDKReady = () => {
+                player = new Spotify.Player({
+                    name: 'My Custom Web Player',
+                    getOAuthToken: cb => { cb(token); },
+                    volume: 0.5
+                });
+
+                // 錯誤處理
+                player.addListener('initialization_error', ({ message }) => { console.error(message); });
+                player.addListener('authentication_error', ({ message }) => { console.error(message); });
+                player.addListener('account_error', ({ message }) => { console.error(message); });
+
+                // 播放狀態更新 (換歌時觸發)
+                player.addListener('player_state_changed', state => {
+                    if (!state) return;
+                    
+                    const track = state.track_window.current_track;
+                    document.getElementById('track-name').innerText = track.name;
+                    document.getElementById('artist-name').innerText = track.artists.map(artist => artist.name).join(', ');
+                    document.getElementById('track-art').src = track.album.images[0].url;
+
+                    // 更新按鈕狀態
+                    document.getElementById('toggle').innerText = state.paused ? '▶' : '⏸';
+                });
+
+                // 播放器就緒
+                player.addListener('ready', ({ device_id }) => {
+                    console.log('Ready with Device ID', device_id);
+                    deviceId = device_id;
+                    document.getElementById('status-bar').innerText = '裝置已就緒！請打開 Spotify 切換播放裝置。';
+                    
+                    // 自動轉移播放權 (選用功能，讓音樂直接跳過來播)
+                    // transferPlaybackHere(device_id, token); 
+                });
+
+                // 連接 Player
+                player.connect();
+
+                // 綁定按鈕功能
+                document.getElementById('toggle').onclick = () => player.togglePlay();
+                document.getElementById('prev').onclick = () => player.previousTrack();
+                document.getElementById('next').onclick = () => player.nextTrack();
+            };
+        }
+    </script>
+</body>
+</html>
